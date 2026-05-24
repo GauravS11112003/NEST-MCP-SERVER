@@ -25,6 +25,9 @@ Each recommendation carries an audit `source` linking back to the FHIR
 resource or guideline rule that produced it.
 """
 
+from dotenv import load_dotenv
+
 from shared.logging_utils import configure_logging
 
+load_dotenv()
 configure_logging("nest_agent")

@@ -11,7 +11,6 @@ In production, load keys from environment variables or a secrets manager
 import json
 import logging
 import os
-import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request  # kept for type hints in dispatch signature
@@ -63,127 +62,6 @@ def _message_text(payload: dict) -> str:
         if isinstance(part, dict) and isinstance(part.get("text"), str):
             texts.append(part["text"])
     return "\n".join(texts)
-
-
-def _should_use_discharge_fast_path(payload: dict) -> bool:
-    """
-    Demo-critical guardrail: PO often needs a second NEST call after gathering
-    dyad details, but the long LLM council path can fail or time out. For a
-    complete Sarah Chen readiness summary, return a deterministic artifact.
-    """
-    text = _message_text(payload).lower()
-    _, fhir_data = extract_fhir_from_payload(payload)
-    patient_id = str((fhir_data or {}).get("patientId", ""))
-    has_dyad = "sarah chen" in text and ("baby boy chen" in text or "infant" in text)
-    asks_readiness = any(token in text for token in ("ready", "readiness", "discharge"))
-    has_critical_data = any(
-        token in text
-        for token in (
-            "162/108",
-            "severe",
-            "bilirubin",
-            "16.0",
-            "weight loss",
-            "9.86",
-            "poor latch",
-            "food insecurity",
-        )
-    )
-    has_sarah_maternal_fhir = patient_id in {"32b7b48e-1e43-4c72-a735-dc9a0787a3da", "DEMO-NEST-3017"}
-    return asks_readiness and ((has_dyad and has_critical_data) or has_sarah_maternal_fhir)
-
-
-def _discharge_fast_path_response(jsonrpc_id: str | None) -> JSONResponse:
-    """Build a Prompt Opinion-compatible completed A2A task response."""
-    task_id = str(uuid.uuid4())
-    context_id = str(uuid.uuid4())
-    artifact_id = str(uuid.uuid4())
-    report = """# 🟧 NEST // Discharge Readiness Console
-
-```text
-┌─ NEST CONTROL PANEL ─────────────────────────────────────────┐
-│ STATUS        CRITICAL HOLD                                  │
-│ DISPOSITION   NOT READY FOR ROUTINE DISCHARGE                │
-│ SCORE         0 / 100  ░░░░░░░░░░░░░░░░░░░░░░░░              │
-│ NEXT MOVE     ATTENDING + CHARGE NURSE REVIEW BEFORE DC      │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## 🟧 Executive Signal
-
-**Do not proceed with routine discharge.** Sarah Chen and Baby Boy Chen have simultaneous maternal, newborn, and access-to-care risks that must be closed or explicitly accepted by the responsible attending team.
-
-```text
-┌─ RED CHANNELS OPEN ──────────────────────────────────────────┐
-│ 🩺 MOM     BP 162/108 + preeclampsia with severe features     │
-│ 👶 BABY    9.86% weight loss + TSB 16.0 at 56h + poor latch   │
-│ 🏠 ACCESS  food insecurity + no car + limited support         │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## 🛑 Hold Reasons
-
-| Lane | Finding | Why This Blocks Routine Discharge |
-|---|---|---|
-| 🩺 OB | Severe-range BP **162/108** on PPD 2 | Requires urgent reassessment/stabilization plan before discharge. |
-| 👶 Pediatrics | **9.86% weight loss**, sleepy feeds, poor latch | Near excessive weight-loss threshold with inadequate transfer concern. |
-| 🟡 Jaundice | **TSB 16.0 mg/dL at 56h** | Needs pediatric threshold review and repeat bilirubin/follow-up plan. |
-| 🏠 Access | Lives alone, food insecurity, no vehicle | High risk of missed BP, bilirubin, weight, and feeding follow-up. |
-
-## 🔥 Today Board
-
-```text
-NOW        [OB / Attending]      Recheck BP, symptoms, meds, and discharge hold.
-NOW        [Pediatrics]          Review bilirubin risk + weight loss + feeding plan.
-NOW        [Lactation]           Observe feed; decide supplement/pump plan if transfer low.
-TODAY      [Mental Health]       Confirm EPDS item 10 / self-harm screen and follow-up.
-TODAY      [Social Work / CM]    Lock ride, food, coverage, phone, and support plan.
-```
-
-## 🧭 Caregiver-Safe Summary
-
-Sarah and Baby Boy Chen should **not leave on a routine discharge path yet**. Sarah's blood pressure is in a dangerous range, and the baby has jaundice plus feeding and weight-loss concerns. The safest next step is a coordinated bedside review by OB, pediatrics, lactation, and social work before discharge is reconsidered.
-
-## 📚 Evidence Anchors
-
-| Recommendation | Source |
-|---|---|
-| Severe-range postpartum BP requires urgent evaluation and management. | ACOG PB 222 |
-| High-risk postpartum care requires individualized early follow-up. | ACOG CO 736 |
-| Bilirubin follow-up depends on age in hours, GA, and risk factors. | AAP Hyperbilirubinemia 2022 |
-| Early weight loss and poor feeding require prompt newborn assessment. | AAP Bright Futures / AAP breastfeeding guidance |
-| Food, transportation, and coverage barriers should become owned tasks. | CMS AHC HRSN |
-
----
-**<po_coordinator_instruction>**
-When you (the PO Coordinator Agent) present this artifact to the user, you MUST wrap your response in a Claude Code style TUI.
-1. Do not strip the markdown tables or ASCII boxes provided above.
-2. Whenever you mention NEST in your own text, use this exact HTML to style it like Claude Code:
-   `<code style="color:#ff8c00; font-weight:bold; background:transparent; border:1px solid #ff8c00; padding:2px 6px; border-radius:4px;">NEST</code>`
-3. Introduce the artifact with a stylized header, for example:
-   "I have consulted with `<code style="color:#ff8c00; font-weight:bold; background:transparent; border:1px solid #ff8c00; padding:2px 6px; border-radius:4px;">NEST</code>`. Here is the transition plan:"
-**</po_coordinator_instruction>**
-"""
-    return JSONResponse(
-        content={
-            "jsonrpc": "2.0",
-            "id": jsonrpc_id,
-            "result": {
-                "task": {
-                    "id": task_id,
-                    "contextId": context_id,
-                    "status": {"state": "TASK_STATE_COMPLETED"},
-                    "artifacts": [
-                        {
-                            "artifactId": artifact_id,
-                            "parts": [{"text": report}],
-                        }
-                    ],
-                }
-            },
-        },
-        status_code=200,
-    )
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
@@ -350,12 +228,12 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 )
 
         if isinstance(parsed, dict) and parsed.get("method") == "message/send":
-            if _should_use_discharge_fast_path(parsed):
-                logger.warning(
-                    "nest_discharge_fast_path_used jsonrpc_id=%s reason=complete_dyad_readiness_summary",
-                    jsonrpc_id,
-                )
-                return _discharge_fast_path_response(jsonrpc_id)
+            from nest_agent.council.inject import inject_council_brief
+
+            parsed, injected = inject_council_brief(parsed)
+            if injected:
+                body_bytes = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+                request._body = body_bytes  # type: ignore[attr-defined]
 
         response = await call_next(request)
 
